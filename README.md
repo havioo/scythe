@@ -4,7 +4,7 @@ A lightweight Windows tray app for the **Razer BlackShark V3 Pro**. Battery, vol
 
 Scythe runs locally. No accounts, telemetry, cloud profiles, or updater. Built with Rust and native Windows APIs, without a browser runtime.
 
-[Download v0.6.1 for Windows x64](https://github.com/havioo/scythe/releases/download/v0.6.1/Scythe-v0.6.1-windows-x64.zip) � [Release notes](#changelog)
+[Download v0.6.1 for Windows x64](https://github.com/havioo/scythe/releases/download/v0.6.1/Scythe-v0.6.1-windows-x64.zip) · [Release notes](#changelog)
 
 ## Why choose Scythe?
 
@@ -14,8 +14,8 @@ Observed on the same Windows machine on October 26, 2026 (Scythe 0.5.0; Synapse 
 
 | Resource | Scythe | Synapse / Razer App Engine |
 | --- | --- | --- |
-| RAM: summed process working sets | 22.0 MiB (1 process) | 1,981.9–2,067.4 MiB (13 processes) |
-| Private committed memory | 5.5 MiB | 1,118.0–1,225.5 MiB |
+| RAM: summed process working sets | 22.0 MiB (1 process) | 1,981.9 MiB - 2,067.4 MiB (13 processes) |
+| Private committed memory | 5.5 MiB | 1,118.0 MiB - 1,225.5 MiB |
 | App files | 1.0 MiB, including bundled licenses | 462.0 MiB installed App Engine files |
 | Local App Engine data, including downloaded apps and caches | No equivalent app cache; Scythe saves a small notification settings file | 590.3 MiB |
 
@@ -119,7 +119,7 @@ Page transitions use a short eased fade, and sidebar expansion uses a 280 ms eas
 
 ## Changelog
 
-### v0.6.1 � October 26, 2026
+### v0.6.1 — October 26, 2026
 
 - Refreshed the native dashboard with a compact sidebar that expands on hover or keyboard focus, smoother compositor-paced movement, and reduced-motion support.
 - Removed the View menu and duplicate About entry. Menu highlights clear when dismissed; keyboard focus remains distinct from mouse hover.
