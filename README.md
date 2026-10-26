@@ -42,7 +42,7 @@ Route games to the headset's **Game** output and voice chat to **Chat**. The har
 
 Software microphone mute and physical headset mute are separate. Release a physical mute using the headset button. Enable **Headset mute notifications** for an alert when the physical button changes from unmuted to muted. Alerts default off; Windows notification settings may suppress them.
 
-Battery glow is green at 60?100%, yellow at 20?59%, and red at 0?19%. Unknown readings stay neutral. Runtime estimation requires at least 20 minutes and a drop of 3 percentage points. Charging, a percentage increase, missing data, or exit resets learning. Estimates are approximate; no battery history is saved.
+Battery glow is green at 60-100%, yellow at 20-59%, and red at 0-19%. Unknown readings stay neutral. Runtime estimation requires at least 20 minutes and a drop of 3 percentage points. Charging, a percentage increase, missing data, or exit resets learning. Estimates are approximate; no battery history is saved.
 
 The dashboard uses privately embedded Clear Sans, antialiased native drawing, and a blue/navy/cream palette. Fonts are not installed globally.
 
