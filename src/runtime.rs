@@ -34,7 +34,7 @@ pub fn audio_loop(
         }
         for action in batch {
             let result = match action {
-                Action::SetSpeakerBands(_)
+                Action::SetSpeakerBands { .. }
                 | Action::SetSleep(_)
                 | Action::SetAnc(_)
                 | Action::SetWireless(_)
@@ -45,9 +45,18 @@ pub fn audio_loop(
                 | Action::SetGameChatBalance(_) => {
                     device_tx.send(action).map_err(|e| e.to_string())
                 }
+                Action::SetReduceMotion(value) => {
+                    let mut preferences = settings::load();
+                    preferences.reduce_motion = value;
+                    let result = settings::save(&preferences);
+                    if result.is_ok() {
+                        shared.lock().unwrap().reduce_motion = value;
+                    }
+                    result
+                }
                 Action::SetTheme(value) => {
                     let mut preferences = settings::load();
-                    preferences.theme = value.min(3);
+                    preferences.theme = value.min(4);
                     let result = settings::save(&preferences);
                     if result.is_ok() {
                         shared.lock().unwrap().theme = preferences.theme;
@@ -143,6 +152,7 @@ pub fn device_loop(
         }));
         let mut last_poll = Instant::now() - Duration::from_secs(60);
         let mut battery_seen: Option<Instant> = None;
+        let mut last_charge_check = Instant::now();
         loop {
             if stop.load(Ordering::Relaxed) {
                 return;
@@ -159,11 +169,11 @@ pub fn device_loop(
             }
             for action in pending {
                 let result = match action {
-                    Action::SetSpeakerBands(value) => {
-                        let slot = shared.lock().unwrap().preset;
-                        match slot {
-                            Some(slot) => hid.set_speaker_bands(slot, value),
-                            None => Err("Current EQ slot unavailable".into()),
+                    Action::SetSpeakerBands { slot, bands } => {
+                        if hid.query(0x13, 0x80).ok().flatten() == Some(slot) {
+                            hid.set_speaker_bands(slot, bands)
+                        } else {
+                            Err("EQ slot changed. Revert and edit the current slot.".into())
                         }
                     }
                     Action::SetSleep(value) => hid.set_sleep(value),
@@ -261,6 +271,21 @@ pub fn device_loop(
                     mic::update(&mut s, v == 1);
                 }
                 last_poll = Instant::now();
+                last_charge_check = Instant::now();
+            }
+            if last_charge_check.elapsed() >= Duration::from_secs(5) {
+                let charging = hid.query(0x2a, 0x80).ok().flatten().and_then(|v| match v {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                });
+                let mut s = shared.lock().unwrap();
+                if s.charging != charging {
+                    s.charging = charging;
+                    s.estimated_minutes = None;
+                    trend.reset();
+                }
+                last_charge_check = Instant::now();
             }
             shared.lock().unwrap().battery_age_seconds =
                 battery_seen.map(|t| t.elapsed().as_secs());

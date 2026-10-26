@@ -4,6 +4,8 @@ use std::path::PathBuf;
 #[derive(Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
+    pub reduce_motion: bool,
+    #[serde(default)]
     pub theme: u8,
     #[serde(default)]
     pub mic_notifications: bool,
@@ -58,5 +60,6 @@ mod tests {
         let restored: Settings = serde_json::from_str(&saved).unwrap();
         assert!(restored.mic_notifications);
         assert_eq!(restored.theme, 3);
+        assert!(!restored.reduce_motion);
     }
 }

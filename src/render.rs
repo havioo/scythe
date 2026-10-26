@@ -125,6 +125,7 @@ struct Registration {
     dc: usize,
     sx: f32,
     sy: f32,
+    tx: f32,
 }
 thread_local! { static TARGETS: RefCell<Vec<Registration>> = const { RefCell::new(Vec::new()) }; }
 
@@ -171,7 +172,34 @@ pub unsafe fn target(
             dc: dc as usize,
             sx,
             sy,
+            tx: 0.0,
         })
+    });
+    TargetGuard {
+        id,
+        _thread: PhantomData,
+    }
+}
+
+/// Temporarily translates logical drawing on an already registered target.
+/// # Safety
+/// `dc` must be valid and exclusively used for the scope.
+pub unsafe fn translate(dc: HDC, x: f32) -> TargetGuard {
+    let id = Rc::new(());
+    TARGETS.with(|targets| {
+        let mut targets = targets.borrow_mut();
+        let (sx, sy, tx) = targets
+            .iter()
+            .rev()
+            .find(|r| r.dc == dc as usize)
+            .map_or((1.0, 1.0, 0.0), |r| (r.sx, r.sy, r.tx));
+        targets.push(Registration {
+            id: id.clone(),
+            dc: dc as usize,
+            sx,
+            sy,
+            tx: tx + x,
+        });
     });
     TargetGuard {
         id,
@@ -191,19 +219,20 @@ impl Graphics {
                 return None;
             }
             let g = Self(p);
-            let (sx, sy) = TARGETS.with(|targets| {
+            let (sx, sy, tx) = TARGETS.with(|targets| {
                 targets
                     .borrow()
                     .iter()
                     .rev()
                     .find(|r| r.dc == dc as usize)
-                    .map_or((1.0, 1.0), |r| (r.sx, r.sy))
+                    .map_or((1.0, 1.0, 0.0), |r| (r.sx, r.sy, r.tx))
             });
             if GdipSetPageUnit(p, UnitPixel) != Ok
                 || GdipScaleWorldTransform(p, sx, sy, MatrixOrderPrepend) != Ok
             {
                 return None;
             }
+            GdipTranslateWorldTransform(p, tx, 0.0, MatrixOrderPrepend);
             GdipSetSmoothingMode(p, SmoothingModeAntiAlias8x8);
             GdipSetCompositingQuality(p, CompositingQualityHighQuality);
             GdipSetTextRenderingHint(p, TextRenderingHintAntiAliasGridFit);
@@ -259,6 +288,17 @@ unsafe fn brush(color: u32) -> Option<Brush> {
             Some(Brush(p))
         } else {
             None
+        }
+    }
+}
+
+/// Clears the full drawing target without antialiased rectangle edge seams.
+/// # Safety
+/// `dc` must be valid and exclusively used during the call.
+pub unsafe fn clear(dc: HDC, color: u32) {
+    unsafe {
+        if let Some(g) = Graphics::new(dc) {
+            GdipGraphicsClear(g.0, argb(color));
         }
     }
 }
@@ -356,6 +396,48 @@ pub unsafe fn polygon(dc: HDC, points: &[POINT], color: u32) {
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn text(dc: HDC, r: RECT, value: &str, color: u32, size: i32, weight: i32, right: bool) {
     unsafe {
+        draw_text(dc, r, value, color, size, weight, right, None);
+    }
+}
+/// Draws a moving highlight clipped to the actual font glyphs.
+/// # Safety
+/// The HDC must be valid and exclusively used during this call.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn charging_text(
+    dc: HDC,
+    r: RECT,
+    value: &str,
+    color: u32,
+    size: i32,
+    weight: i32,
+    phase: f32,
+    highlight: u32,
+) {
+    unsafe {
+        draw_text(
+            dc,
+            r,
+            value,
+            color,
+            size,
+            weight,
+            false,
+            Some((phase, highlight)),
+        );
+    }
+}
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_text(
+    dc: HDC,
+    r: RECT,
+    value: &str,
+    color: u32,
+    size: i32,
+    weight: i32,
+    right: bool,
+    shimmer: Option<(f32, u32)>,
+) {
+    unsafe {
         if size <= 0 || value.is_empty() {
             return;
         }
@@ -365,9 +447,44 @@ pub unsafe fn text(dc: HDC, r: RECT, value: &str, color: u32, size: i32, weight:
         let Some(g) = Graphics::new(dc) else {
             return;
         };
-        let Some(b) = brush(color) else {
+        let Some(mut b) = brush(color) else {
             return;
         };
+        if let Some((phase, shine)) = shimmer {
+            let start = PointF {
+                X: r.X - 60.,
+                Y: r.Y,
+            };
+            let end = PointF {
+                X: r.X + r.Width + 60.,
+                Y: r.Y,
+            };
+            let mut gradient = null_mut();
+            if GdipCreateLineBrush(
+                &start,
+                &end,
+                argb(color),
+                argb(color),
+                WrapModeTileFlipX,
+                &mut gradient,
+            ) == Ok
+            {
+                let center = 0.06 + phase.clamp(0., 1.) * 0.88;
+                let colors = [
+                    argb(color),
+                    argb(color),
+                    argb(shine),
+                    argb(color),
+                    argb(color),
+                ];
+                let positions = [0., center - 0.045, center, center + 0.045, 1.];
+                if GdipSetLinePresetBlend(gradient, colors.as_ptr(), positions.as_ptr(), 5) == Ok {
+                    b = Brush(gradient.cast());
+                } else {
+                    GdipDeleteBrush(gradient.cast());
+                }
+            }
+        }
         let fonts = fonts().lock().unwrap_or_else(|e| e.into_inner());
         if fonts.family == 0 {
             return;
@@ -483,6 +600,33 @@ pub unsafe fn image(dc: HDC, r: RECT, pixel_width: i32, pixel_height: i32, bgra:
     }
 }
 
+/// Draws an antialiased polyline in logical coordinates.
+/// # Safety
+/// The HDC must be valid and exclusively used during this call.
+pub unsafe fn line(dc: HDC, points: &[POINT], color: u32, width: f32) {
+    unsafe {
+        if points.len() < 2 {
+            return;
+        }
+        let Some(g) = Graphics::new(dc) else {
+            return;
+        };
+        let mut pen = null_mut();
+        if GdipCreatePen1(argb(color), width, UnitWorld, &mut pen) != Ok {
+            return;
+        }
+        let points: Vec<PointF> = points
+            .iter()
+            .map(|p| PointF {
+                X: p.x as f32,
+                Y: p.y as f32,
+            })
+            .collect();
+        GdipDrawLines(g.0, pen, points.as_ptr(), points.len() as i32);
+        GdipDeletePen(pen);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,6 +710,114 @@ mod tests {
                 );
                 assert_eq!(pixels[0] & 0xffffff, 0);
             }
+        }
+    }
+    #[test]
+    fn logical_translation_matches_scaled_pixels_and_restores_target() {
+        unsafe {
+            for scale in [1, 2] {
+                let s = Surface::new(64 * scale);
+                let _target = target(s.dc, s.size, s.size, 64, 64);
+                fill(
+                    s.dc,
+                    RECT {
+                        left: 0,
+                        top: 0,
+                        right: 64,
+                        bottom: 64,
+                    },
+                    0,
+                );
+                {
+                    let _offset = translate(s.dc, -10.0);
+                    fill(
+                        s.dc,
+                        RECT {
+                            left: 20,
+                            top: 10,
+                            right: 30,
+                            bottom: 20,
+                        },
+                        0xffffff,
+                    );
+                }
+                fill(
+                    s.dc,
+                    RECT {
+                        left: 40,
+                        top: 10,
+                        right: 50,
+                        bottom: 20,
+                    },
+                    0xffffff,
+                );
+                GdiFlush();
+                let pixels = std::slice::from_raw_parts(s.bits, (s.size * s.size) as usize);
+                let pixel =
+                    |x: i32, y: i32| pixels[(y * scale * s.size + x * scale) as usize] & 0xffffff;
+                assert_eq!(pixel(15, 15), 0xffffff);
+                assert_eq!(pixel(25, 15), 0);
+                assert_eq!(pixel(45, 15), 0xffffff);
+            }
+        }
+    }
+    #[test]
+    fn clearing_a_control_surface_leaves_no_dark_edge_seams() {
+        unsafe {
+            for scale in [1, 2] {
+                let surface = Surface::new(32 * scale);
+                let _target = target(surface.dc, surface.size, surface.size, 32, 32);
+                clear(surface.dc, 0xffffff);
+                GdiFlush();
+                let pixels = std::slice::from_raw_parts(
+                    surface.bits,
+                    (surface.size * surface.size) as usize,
+                );
+                assert!(pixels.iter().all(|pixel| pixel & 0xffffff == 0xffffff));
+            }
+        }
+    }
+    #[test]
+    fn charging_shimmer_moves_without_painting_outside_glyphs() {
+        unsafe {
+            let surface = Surface::new(240);
+            let r = RECT {
+                left: 5,
+                top: 10,
+                right: 235,
+                bottom: 110,
+            };
+            let bounds = RECT {
+                left: 0,
+                top: 0,
+                right: 240,
+                bottom: 240,
+            };
+            fill(surface.dc, bounds, 0);
+            text(surface.dc, r, "75%", 0xffffff, 76, 600, false);
+            GdiFlush();
+            let glyphs = std::slice::from_raw_parts(surface.bits, 240 * 240).to_vec();
+            let mut frames = Vec::new();
+            for phase in [0.2, 0.6] {
+                fill(surface.dc, bounds, 0);
+                charging_text(surface.dc, r, "75%", 0x50ae60, 76, 600, phase, 0xd0eac6);
+                GdiFlush();
+                let pixels = std::slice::from_raw_parts(surface.bits, 240 * 240).to_vec();
+                for (glyph, pixel) in glyphs.iter().zip(&pixels) {
+                    if glyph & 0xffffff == 0 {
+                        assert_eq!(pixel & 0xffffff, 0);
+                    }
+                }
+                frames.push(pixels);
+            }
+            assert!(
+                frames[0]
+                    .iter()
+                    .zip(&frames[1])
+                    .filter(|(a, b)| (**a & 0xffffff) != (**b & 0xffffff))
+                    .count()
+                    > 50
+            );
         }
     }
 }

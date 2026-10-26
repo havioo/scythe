@@ -60,3 +60,7 @@ Include hardware results and remaining limitations in the pull request, and upda
 ## License
 
 Contributions must be compatible with MIT. Preserve third-party notices, including the separate Apache 2.0 license for Clear Sans.
+
+## UI changes
+
+Keep interaction rectangles and painting aligned across DPI scales. Test connected and disconnected states, keyboard navigation, and staged EQ changes when the active slot changes. The sidebar has five sections; page transitions must respect Reduce Motion and Windows animation preferences. Custom sleep values must remain whole minutes within the confirmed firmware byte range. Do not expose RGB or effects modes without a verified command and hardware behavior.

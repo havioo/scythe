@@ -3,8 +3,11 @@ use serde::Serialize;
 pub const FREQUENCIES: [&str; 10] = [
     "31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k",
 ];
-pub const PRESETS: [(&str, [i8; 10]); 4] = [
+pub const PRESETS: [(&str, [i8; 10]); 7] = [
     ("Flat", [0; 10]),
+    ("eSports", [-4, -3, -2, 0, 1, 3, 4, 3, 1, 0]),
+    ("FPS", [-5, -4, -2, -1, 1, 4, 5, 3, 0, -1]),
+    ("Music", [3, 2, 1, 0, -1, 0, 1, 2, 3, 2]),
     ("Focus", [-3, -2, -1, 0, 1, 2, 3, 2, 1, 0]),
     ("Warm", [3, 3, 2, 1, 0, 0, -1, -1, 0, 1]),
     ("Cinema", [4, 3, 2, 0, -1, 0, 1, 2, 3, 2]),
@@ -60,6 +63,17 @@ pub fn decode_voice(bytes: &[u8]) -> Option<bool> {
         None
     }
 }
+pub fn parse_minutes(value: &str) -> Result<u8, &'static str> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("Enter whole minutes from 1 to 255.");
+    }
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|v| *v > 0)
+        .ok_or("Enter whole minutes from 1 to 255.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +122,14 @@ mod tests {
         assert!(decode_anc(&[1, 0]).is_none());
         assert!(decode_voice(&[1, 1]).is_none());
         assert!(decode_voice(&[0, 255]).is_none());
+    }
+    #[test]
+    fn custom_minutes_reject_invalid_units_and_overflow() {
+        for value in ["", "0", "256", "1000", "1.5", "-1", "15m", " 15", "15 "] {
+            assert!(parse_minutes(value).is_err(), "{value}");
+        }
+        for value in [1, 7, 37, 255] {
+            assert_eq!(parse_minutes(&value.to_string()), Ok(value));
+        }
     }
 }

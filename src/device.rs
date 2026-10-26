@@ -319,7 +319,7 @@ impl Hid {
                         .filter(|v| v[0] == slot)
                 })
                 .and_then(|v| crate::features::decode_bands(&v[1..])),
-            sleep: one(0x2c).filter(|v| matches!(v, 0 | 15 | 30 | 45 | 60)),
+            sleep: one(0x2c),
             anc: self
                 .read_bytes(0x12, &[], 2)
                 .ok()
@@ -333,9 +333,6 @@ impl Hid {
         }
     }
     pub fn set_sleep(&self, value: u8) -> Result<(), String> {
-        if !matches!(value, 0 | 15 | 30 | 45 | 60) {
-            return Err("Unsupported sleep interval".into());
-        }
         self.ack(0xac, &[value])?;
         if self.read_bytes(0x2c, &[], 1)? != [value] {
             return Err("Sleep readback mismatch".into());

@@ -27,6 +27,7 @@ use std::{
 pub struct State {
     pub features: features::Features,
     pub theme: u8,
+    pub reduce_motion: bool,
     pub status: String,
     pub battery: Option<u8>,
     pub charging: Option<bool>,
@@ -46,7 +47,8 @@ pub struct State {
 #[derive(Debug)]
 pub enum Action {
     SetTheme(u8),
-    SetSpeakerBands([i8; 10]),
+    SetReduceMotion(bool),
+    SetSpeakerBands { slot: u8, bands: [i8; 10] },
     SetSleep(u8),
     SetAnc([u8; 2]),
     SetWireless(u8),
@@ -65,7 +67,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             features: Default::default(),
-            theme: settings::load().theme.min(3),
+            theme: settings::load().theme.min(4),
+            reduce_motion: settings::load().reduce_motion,
             status: "Searching for headset…".into(),
             battery: None,
             charging: None,
@@ -190,7 +193,14 @@ fn main() {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "style":format!("0x{style:08X}"),"standard_titlebar":style&WS_CAPTION!=0,
-                    "popup_window":style&WS_POPUP!=0,"visible":IsWindowVisible(hwnd)!=0
+                    "popup_window":style&WS_POPUP!=0,"visible":IsWindowVisible(hwnd)!=0,
+                    "sidebar_cached_frames":SendMessageW(hwnd,ui::ANIMATION_STATUS,0,0),
+                    "sidebar_mean_render_us":SendMessageW(hwnd,ui::ANIMATION_STATUS,1,0),
+                    "sidebar_max_render_us":SendMessageW(hwnd,ui::ANIMATION_STATUS,2,0),
+                    "preview_alpha_update_ok":SendMessageW(hwnd,ui::PREVIEW_STATUS,0,0)==1,
+                    "small_icon_present":SendMessageW(hwnd,WM_GETICON,ICON_SMALL as usize,0)!=0,
+                    "big_icon_present":SendMessageW(hwnd,WM_GETICON,ICON_BIG as usize,0)!=0,
+                    "icon_blade_colorref":format!("0x{:06X}",SendMessageW(hwnd,ui::ICON_STATUS,0,0))
                 }))
                 .unwrap()
             );
@@ -206,6 +216,68 @@ fn main() {
     }
     if args.iter().any(|a| a == "--snapshot") {
         println!("{}", serde_json::to_string_pretty(&snapshot(true)).unwrap());
+        return;
+    }
+    if args.iter().any(|a| a == "--probe-lighting") {
+        let result = (|| -> Result<serde_json::Value, String> {
+            let devices = device::enumerate();
+            let info = device::control_collection(&devices)
+                .ok_or("Headset control interface unavailable")?;
+            let mut hid = device::Hid::open(info)?;
+            let reports = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+            let observed = reports.clone();
+            hid.observe(Arc::new(move |report| {
+                observed.lock().unwrap().push(report.to_vec());
+            }));
+            let mut queries = Vec::new();
+            for route in [0u8, 0x80] {
+                for (command, name) in [
+                    (0x40, "effect"),
+                    (0x41, "brightness"),
+                    (0x43, "brightness_state"),
+                ] {
+                    let result = hid.exchange_bytes(command, route, &[]);
+                    queries.push(serde_json::json!({"name":name,"command":command,"route":route,"reply":result.as_ref().ok().and_then(|r|r.as_ref()),"error":result.err()}));
+                }
+            }
+            let indicator = hid.features(None).led;
+            let observed = reports.lock().unwrap().clone();
+            Ok(
+                serde_json::json!({"read_only":true,"queries":queries,"indicator_mode":indicator,"reports":observed}),
+            )
+        })();
+        match result {
+            Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if args.iter().any(|a| a == "--verify-sleep") {
+        let result = (|| -> Result<serde_json::Value, String> {
+            let devices = device::enumerate();
+            let info = device::control_collection(&devices).ok_or("Headset not detected")?;
+            let hid = device::Hid::open(info)?;
+            let previous = hid.features(None).sleep.ok_or("Sleep timer unavailable")?;
+            let mut checks = Vec::new();
+            for value in [1, 7, 37, 255] {
+                let result = hid.set_sleep(value);
+                checks.push(serde_json::json!({"minutes":value,"success":result.is_ok(),"error":result.err()}));
+            }
+            let restored = hid.set_sleep(previous);
+            Ok(
+                serde_json::json!({"previous_minutes":previous,"checks":checks,"restored":restored.is_ok(),"restore_error":restored.err()}),
+            )
+        })();
+        match result {
+            Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     if args.iter().any(|a| a == "--verify-features") {
@@ -352,11 +424,21 @@ fn main() {
         }
         return;
     }
-    if args
-        .iter()
-        .any(|a| a == "--render" || a == "--render-hover" || a == "--render-2x")
-    {
-        let initial = snapshot(true);
+    if args.iter().any(|a| {
+        a == "--render"
+            || a == "--render-hover"
+            || a == "--render-2x"
+            || a == "--render-about"
+            || a == "--render-demo"
+    }) {
+        let initial = if args
+            .iter()
+            .any(|a| a == "--render-about" || a == "--render-demo")
+        {
+            State::default()
+        } else {
+            snapshot(true)
+        };
         let state = Arc::new(Mutex::new(initial));
         let (tx, _rx) = mpsc::channel();
         ui::run(state, Arc::new(AtomicBool::new(false)), tx);
