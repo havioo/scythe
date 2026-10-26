@@ -1,0 +1,27 @@
+[package]
+name = "scythe"
+version = "0.5.0"
+edition = "2024"
+license = "MIT"
+authors = ["havioo"]
+description = "A lightweight Windows tray app for the Razer BlackShark V3 Pro"
+repository = "https://github.com/havioo/scythe"
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Devices_HumanInterfaceDevice", "Win32_Storage_FileSystem",
+  "Win32_Security", "Win32_System_IO", "Win32_System_Threading",
+  "Win32_System_LibraryLoader", "Win32_System_Com",
+  "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_HiDpi",
+  "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus"
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

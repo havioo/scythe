@@ -1,0 +1,7 @@
+/target/
+/dist/
+/local/
+*.bmp
+*.log
+*.pdb
+Thumbs.db
