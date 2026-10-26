@@ -4,6 +4,23 @@ A lightweight Windows tray app for the **Razer BlackShark V3 Pro**. Battery, vol
 
 Scythe runs locally. No accounts, telemetry, cloud profiles, or updater. Built with Rust and native Windows APIs, without a browser runtime.
 
+## Why choose Scythe?
+
+For BlackShark V3 Pro owners who want the supported everyday headset controls, Scythe offers a small native app that works offline without an account or telemetry.
+
+Observed on the same Windows machine on October 26, 2026 (Scythe 0.5.0; Synapse / Razer App Engine 4.0.827.114):
+
+| Resource | Scythe | Synapse / Razer App Engine |
+| --- | --- | --- |
+| RAM: summed process working sets | 22.0 MiB (1 process) | 1,981.9–2,067.4 MiB (13 processes) |
+| Private committed memory | 5.5 MiB | 1,118.0–1,225.5 MiB |
+| App files | 1.0 MiB, including bundled licenses | 462.0 MiB installed App Engine files |
+| Local App Engine data, including downloaded apps and caches | No equivalent app cache; Scythe saves a small notification settings file | 590.3 MiB |
+
+That is about **99% less summed working-set memory** in this observation, with a roughly **1 MiB distribution** versus **1,052 MiB of App Engine files and local data** on this machine. Scythe is a lighter choice when its supported controls cover your needs.
+
+These are observations, not a controlled benchmark or a guarantee. Memory was sampled three times, five seconds apart, with Scythe running in the tray and Synapse started for measurement; window states and workloads were not matched. Summed working sets can count shared pages more than once; private committed memory is a separate metric, not physical RAM usage. Storage is the sum of file lengths, excludes shared audio drivers and other Razer components, and is not a prediction of space recovered by uninstalling. Synapse provides broader device support and features Scythe does not implement, including firmware updates and THX controls. See the [measurement record](docs/resource-usage-2026-10-26.json), [support table](#current-support), and [telemetry analysis](TELEMETRY.md).
+
 ![Scythe dashboard](docs/images/dashboard.png)
 
 ## Current support

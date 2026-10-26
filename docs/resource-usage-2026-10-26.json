@@ -1,0 +1,66 @@
+{
+  "Date": "2026-10-26",
+  "SynapseVersion": "4.0.827.114",
+  "ScytheVersion": "0.5.0",
+  "Method": "Three process snapshots 5 seconds apart; summed WorkingSet64 and PrivateMemorySize64 per process name. Existing Scythe tray process; Synapse launched for this observation. No feature interaction or controlled equal-window-state benchmark.",
+  "Samples": [
+    {
+      "TimeUtc": "2026-10-26T06:24:53.7559419Z",
+      "Processes": [
+        {
+          "Name": "Scythe",
+          "Count": 1,
+          "WorkingSetBytes": 23097344.0,
+          "PrivateBytes": 5799936.0
+        },
+        {
+          "Name": "RazerAppEngine",
+          "Count": 13,
+          "WorkingSetBytes": 2167758848.0,
+          "PrivateBytes": 1284988928.0
+        }
+      ]
+    },
+    {
+      "TimeUtc": "2026-10-26T06:24:58.7795219Z",
+      "Processes": [
+        {
+          "Name": "Scythe",
+          "Count": 1,
+          "WorkingSetBytes": 23097344.0,
+          "PrivateBytes": 5799936.0
+        },
+        {
+          "Name": "RazerAppEngine",
+          "Count": 13,
+          "WorkingSetBytes": 2167779328.0,
+          "PrivateBytes": 1284988928.0
+        }
+      ]
+    },
+    {
+      "TimeUtc": "2026-10-26T06:25:03.8028992Z",
+      "Processes": [
+        {
+          "Name": "Scythe",
+          "Count": 1,
+          "WorkingSetBytes": 23097344.0,
+          "PrivateBytes": 5799936.0
+        },
+        {
+          "Name": "RazerAppEngine",
+          "Count": 13,
+          "WorkingSetBytes": 2078142464.0,
+          "PrivateBytes": 1172353024.0
+        }
+      ]
+    }
+  ],
+  "Storage": {
+    "ScytheDistributionBytes": 1051983,
+    "ScytheExecutableBytes": 1039872,
+    "RazerAppEngineInstallBytes": 484411893,
+    "RazerAppEngineLocalDataBytes": 618948549,
+    "Method": "Sum of file lengths, recursively. Scythe dist includes executable and bundled licenses. Razer install plus complete local App Engine data; excludes other Razer components and shared audio drivers. Logical bytes, not allocated disk space."
+  }
+}
