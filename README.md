@@ -108,6 +108,10 @@ If I have the time and passion to keep expanding this, I'd like to support more 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for device identification, model-specific commands, endpoint matching, fixtures, and hardware validation.
 
+## Telemetry analysis
+
+See [TELEMETRY.md](TELEMETRY.md) for an evidence-based analysis of Razer Synapse / App Engine telemetry, data collection, and local storage, including the report's scope and limitations. This report concerns Razer's software; Scythe does not collect telemetry.
+
 ## Known limitations
 
 Only the BlackShark V3 Pro dongle configuration is verified. Device selection and audio endpoint matching are model-specific; a generic profile system is not implemented. Reconnect, sleep/wake, power transitions, long discharge sessions, and mixed-monitor DPI need broader testing. Keyboard navigation is supported, but custom controls do not expose complete screen-reader semantics.
