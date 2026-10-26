@@ -34,15 +34,30 @@ pub fn audio_loop(
         }
         for action in batch {
             let result = match action {
-                Action::SetMicPreset(_)
+                Action::SetSpeakerBands(_)
+                | Action::SetSleep(_)
+                | Action::SetAnc(_)
+                | Action::SetWireless(_)
+                | Action::SetVoicePrompt(_)
+                | Action::SetLed(_)
+                | Action::SetMicPreset(_)
                 | Action::SetSidetone(_)
                 | Action::SetGameChatBalance(_) => {
                     device_tx.send(action).map_err(|e| e.to_string())
                 }
+                Action::SetTheme(value) => {
+                    let mut preferences = settings::load();
+                    preferences.theme = value.min(3);
+                    let result = settings::save(&preferences);
+                    if result.is_ok() {
+                        shared.lock().unwrap().theme = preferences.theme;
+                    }
+                    result
+                }
                 Action::SetMicNotifications(enabled) => {
-                    let result = settings::save(&settings::Settings {
-                        mic_notifications: enabled,
-                    });
+                    let mut preferences = settings::load();
+                    preferences.mic_notifications = enabled;
+                    let result = settings::save(&preferences);
                     if result.is_ok() {
                         shared.lock().unwrap().notifications_enabled = enabled;
                     }
@@ -75,6 +90,7 @@ pub fn audio_loop(
 fn disconnected(shared: &Arc<Mutex<State>>, message: &str) {
     let mut s = shared.lock().unwrap();
     s.status = message.into();
+    s.features = Default::default();
     s.battery = None;
     s.charging = None;
     s.preset = None;
@@ -143,6 +159,24 @@ pub fn device_loop(
             }
             for action in pending {
                 let result = match action {
+                    Action::SetSpeakerBands(value) => {
+                        let slot = shared.lock().unwrap().preset;
+                        match slot {
+                            Some(slot) => hid.set_speaker_bands(slot, value),
+                            None => Err("Current EQ slot unavailable".into()),
+                        }
+                    }
+                    Action::SetSleep(value) => hid.set_sleep(value),
+                    Action::SetAnc(value) => hid.set_anc(value),
+                    Action::SetWireless(value) => {
+                        let result = hid.set_wireless(value);
+                        if let Ok(reopened) = hid.reopened() {
+                            hid = reopened;
+                        }
+                        result
+                    }
+                    Action::SetVoicePrompt(value) => hid.set_voice_prompt(value),
+                    Action::SetLed(value) => hid.set_led(value),
                     Action::SetMicPreset(value) => {
                         let r = hid.set_mic_preset(value);
                         if r.is_ok() {
@@ -166,6 +200,11 @@ pub fn device_loop(
                     }
                     _ => Err("Unsupported headset operation".into()),
                 };
+                if result.is_ok() {
+                    let slot = shared.lock().unwrap().preset;
+                    let features = hid.features(slot);
+                    shared.lock().unwrap().features = features;
+                }
                 shared.lock().unwrap().last_error = result.err();
             }
             if last_poll.elapsed() >= Duration::from_secs(30)
@@ -188,6 +227,7 @@ pub fn device_loop(
                     _ => None,
                 });
                 let preset = hid.query(0x13, 0x80).ok().flatten();
+                let features = hid.features(preset);
                 let mic_eq = hid.query(0x16, 0x80).ok().flatten();
                 let sidetone = hid.query(0x19, 0x80).ok().flatten().filter(|v| *v <= 15);
                 let game_chat_balance = hid.query(0x5c, 0x80).ok().flatten().filter(|v| *v <= 20);
@@ -211,6 +251,7 @@ pub fn device_loop(
                 s.battery = battery;
                 s.charging = charging;
                 s.preset = preset;
+                s.features = features;
                 s.mic_eq = mic_eq;
                 s.sidetone = sidetone;
                 s.game_chat_balance = game_chat_balance;

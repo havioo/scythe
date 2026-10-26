@@ -262,33 +262,177 @@ impl Hid {
         Ok(())
     }
     fn exchange(&self, command: u8, route: u8, payload: &[u8]) -> Result<Option<u8>, String> {
+        Ok(self
+            .exchange_bytes(command, route, payload)?
+            .filter(|v| v.len() == 1 || (command == 0x20 && v.len() == 2))
+            .and_then(|v| v.first().copied()))
+    }
+    pub fn exchange_bytes(
+        &self,
+        command: u8,
+        route: u8,
+        payload: &[u8],
+    ) -> Result<Option<Vec<u8>>, String> {
         let mut b = if payload.is_empty() {
             protocol::query(command, route)
         } else {
             protocol::request(command, route, payload)
         };
+        std::thread::sleep(Duration::from_millis(10));
         if !self.transfer(&mut b, true, 500)? {
-            return Err("Query write timed out".into());
+            return Err("HID write timed out".into());
         }
         let deadline = Instant::now() + Duration::from_millis(900);
         while Instant::now() < deadline {
             let Some(response) = self.receive(100)? else {
                 continue;
             };
-            if std::env::var_os("BLACKSHARK_TRACE").is_some() {
-                eprintln!("query {command:02X}/{route:02X}: {:02X?}", &response[..16]);
-            }
             if protocol::valid(&response)
                 && response[1] == 2
                 && response[9] == route
                 && response[10] == command
                 && response[11] == 1
-                && (response[12] == 1 || command == 0x20 && response[12] == 2)
             {
-                return Ok(Some(response[13]));
+                return Ok(Some(response[13..13 + response[12] as usize].to_vec()));
             }
         }
         Ok(None)
+    }
+    fn read_bytes(&self, command: u8, payload: &[u8], length: usize) -> Result<Vec<u8>, String> {
+        self.exchange_bytes(command, 0x80, payload)?
+            .filter(|v| v.len() == length)
+            .ok_or_else(|| format!("No valid reply for command {command:02X}"))
+    }
+    fn ack(&self, command: u8, payload: &[u8]) -> Result<(), String> {
+        if self.read_bytes(command, payload, 1)? != [0] {
+            return Err(format!("Command {command:02X} was not acknowledged"));
+        }
+        Ok(())
+    }
+    pub fn features(&self, slot: Option<u8>) -> crate::features::Features {
+        let one = |command| self.read_bytes(command, &[], 1).ok().map(|v| v[0]);
+        crate::features::Features {
+            bands: slot
+                .and_then(|slot| {
+                    self.read_bytes(0x15, &[slot], 11)
+                        .ok()
+                        .filter(|v| v[0] == slot)
+                })
+                .and_then(|v| crate::features::decode_bands(&v[1..])),
+            sleep: one(0x2c).filter(|v| matches!(v, 0 | 15 | 30 | 45 | 60)),
+            anc: self
+                .read_bytes(0x12, &[], 2)
+                .ok()
+                .and_then(|v| crate::features::decode_anc(&v)),
+            wireless: one(0x5f).filter(|v| *v <= 1),
+            voice_prompt: self
+                .read_bytes(0x65, &[0], 2)
+                .ok()
+                .and_then(|v| crate::features::decode_voice(&v)),
+            led: one(0x66).filter(|v| *v <= 2),
+        }
+    }
+    pub fn set_sleep(&self, value: u8) -> Result<(), String> {
+        if !matches!(value, 0 | 15 | 30 | 45 | 60) {
+            return Err("Unsupported sleep interval".into());
+        }
+        self.ack(0xac, &[value])?;
+        if self.read_bytes(0x2c, &[], 1)? != [value] {
+            return Err("Sleep readback mismatch".into());
+        }
+        Ok(())
+    }
+    pub fn set_anc(&self, value: [u8; 2]) -> Result<(), String> {
+        if !matches!(value[0], 0 | 1 | 80) || !(1..=4).contains(&value[1]) {
+            return Err("Unsupported ANC setting".into());
+        }
+        self.ack(0x92, &value)?;
+        if self.read_bytes(0x12, &[], 2)? != value {
+            return Err("ANC readback mismatch".into());
+        }
+        Ok(())
+    }
+    pub fn reopened(&self) -> Result<Self, String> {
+        let devices = enumerate();
+        let info =
+            control_collection(&devices).ok_or("Headset interface unavailable during reconnect")?;
+        let mut hid = Self::open(info)?;
+        hid.observer = self.observer.clone();
+        Ok(hid)
+    }
+    pub fn set_wireless(&self, value: u8) -> Result<(), String> {
+        if value > 1 {
+            return Err("Unsupported wireless mode".into());
+        }
+        self.ack(0xdf, &[value])?;
+        if self.read_bytes(0x5f, &[], 1).is_ok_and(|v| v == [value]) {
+            return Ok(());
+        }
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(200));
+            if let Ok(hid) = self.reopened()
+                && hid.read_bytes(0x5f, &[], 1).is_ok_and(|v| v == [value])
+            {
+                return Ok(());
+            }
+        }
+        Err("Wireless mode could not be verified after reconnect".into())
+    }
+    pub fn set_led(&self, value: u8) -> Result<(), String> {
+        if value > 2 {
+            return Err("Unsupported LED mode".into());
+        }
+        self.ack(0xe6, &[value])?;
+        if self.read_bytes(0x66, &[], 1)? != [value] {
+            return Err("LED readback mismatch".into());
+        }
+        Ok(())
+    }
+    pub fn set_voice_prompt(&self, value: bool) -> Result<(), String> {
+        self.ack(0xe5, &[0, u8::from(value)])?;
+        if self.read_bytes(0x65, &[0], 2)? != [0, u8::from(value)] {
+            return Err("Voice prompt readback mismatch".into());
+        }
+        Ok(())
+    }
+    fn write_speaker_bands(&self, payload: &[u8]) -> Result<(), String> {
+        self.ack(0xe1, &[1])?;
+        let write = self.ack(0x95, payload);
+        let stop = self.ack(0xe1, &[2]);
+        write.and(stop)
+    }
+    pub fn set_speaker_bands(&self, slot: u8, bands: [i8; 10]) -> Result<(), String> {
+        let mut payload = vec![slot];
+        for band in bands {
+            payload.push(crate::features::encode_band(band)?);
+        }
+        let previous = self.read_bytes(0x15, &[slot], 11)?;
+        if previous[0] != slot {
+            return Err("EQ slot mismatch".into());
+        }
+        let result = self.write_speaker_bands(&payload).and_then(|()| {
+            std::thread::sleep(Duration::from_millis(30));
+            if self.read_bytes(0x15, &[slot], 11)? == payload {
+                Ok(())
+            } else {
+                Err("EQ readback mismatch".into())
+            }
+        });
+        if let Err(error) = result {
+            let restored = self.write_speaker_bands(&previous).and_then(|()| {
+                if self.read_bytes(0x15, &[slot], 11)? == previous {
+                    Ok(())
+                } else {
+                    Err("restore readback mismatch".into())
+                }
+            });
+            return Err(match restored {
+                Ok(()) => format!("{error}; previous bands restored"),
+                Err(restore) => format!("{error}; restore failed: {restore}"),
+            });
+        }
+
+        Ok(())
     }
 }
 

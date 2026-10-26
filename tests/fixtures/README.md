@@ -6,3 +6,5 @@ BlackShark V3 Pro report bytes and direction labels only; timestamps, paths, pro
 - `microphone-reports.json`: physical mute/unmute events and microphone EQ/sidetone writes on updated firmware.
 
 Tests consume `normalized_result.messages[].payload.kind` and `.bytes`. Byte arrays contain original complete reports, including checksums.
+
+- `feature-replies.json`: unique replies from hardware validation of EQ, ANC, sleep, wireless, voice prompt, and LED changes. Includes ANC mode 80 (decimal), which must not be confused with 0x80.

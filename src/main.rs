@@ -2,12 +2,14 @@
 mod audio;
 mod battery;
 mod device;
+mod features;
 mod mic;
 mod mixer;
 mod protocol;
 mod render;
 mod runtime;
 mod settings;
+mod theme;
 mod trend;
 mod ui;
 
@@ -23,6 +25,8 @@ use std::{
 
 #[derive(Clone, Debug, Serialize)]
 pub struct State {
+    pub features: features::Features,
+    pub theme: u8,
     pub status: String,
     pub battery: Option<u8>,
     pub charging: Option<bool>,
@@ -41,6 +45,13 @@ pub struct State {
 }
 #[derive(Debug)]
 pub enum Action {
+    SetTheme(u8),
+    SetSpeakerBands([i8; 10]),
+    SetSleep(u8),
+    SetAnc([u8; 2]),
+    SetWireless(u8),
+    SetVoicePrompt(bool),
+    SetLed(u8),
     SetMicVolume(u8),
     SetMicMute(bool),
     SetSpeakerVolume(u8),
@@ -53,6 +64,8 @@ pub enum Action {
 impl Default for State {
     fn default() -> Self {
         Self {
+            features: Default::default(),
+            theme: settings::load().theme.min(3),
             status: "Searching for headset…".into(),
             battery: None,
             charging: None,
@@ -147,6 +160,7 @@ fn snapshot(poll: bool) -> State {
             state.mic_eq = hid.query(0x16, 0x80).ok().flatten();
             state.sidetone = hid.query(0x19, 0x80).ok().flatten();
             state.game_chat_balance = hid.query(0x5c, 0x80).ok().flatten().filter(|v| *v <= 20);
+            state.features = hid.features(state.preset);
         }
         Err(e) => state.detail = e,
     }
@@ -192,6 +206,89 @@ fn main() {
     }
     if args.iter().any(|a| a == "--snapshot") {
         println!("{}", serde_json::to_string_pretty(&snapshot(true)).unwrap());
+        return;
+    }
+    if args.iter().any(|a| a == "--verify-features") {
+        let result = (|| -> Result<serde_json::Value, String> {
+            let devices = device::enumerate();
+            let info = device::control_collection(&devices).ok_or("Headset not detected")?;
+            let mut hid = device::Hid::open(info)?;
+            let reports = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+            let observed = reports.clone();
+            hid.observe(Arc::new(move |report| {
+                if protocol::valid(report) {
+                    observed.lock().unwrap().push(report.to_vec());
+                }
+            }));
+            let slot = hid.query(0x13, 0x80)?;
+            let before = hid.features(slot);
+            let mut results = serde_json::Map::new();
+            macro_rules! record {($name:literal,$value:expr,$operation:expr)=>{
+                if let Some(value)=$value {
+                    let outcome:Result<(),String>=($operation)(value);
+                    results.insert($name.into(),serde_json::json!({"value":value,"success":outcome.is_ok(),"error":outcome.err()}));
+                } else {results.insert($name.into(),serde_json::json!({"available":false}));}
+            }}
+            record!("sleep", before.sleep, |v| hid.set_sleep(v));
+            record!("anc", before.anc, |v| hid.set_anc(v));
+            record!("wireless", before.wireless, |v| hid.set_wireless(v));
+            hid = hid.reopened()?;
+            record!("voice_prompt", before.voice_prompt, |v| hid
+                .set_voice_prompt(v));
+            record!("led", before.led, |v| hid.set_led(v));
+            if let (Some(slot), Some(bands)) = (slot, before.bands) {
+                let outcome = hid.set_speaker_bands(slot, bands);
+                results.insert("speaker_eq".into(),serde_json::json!({"slot":slot,"bands":bands,"success":outcome.is_ok(),"error":outcome.err()}));
+            }
+            if args.iter().any(|a| a == "--exercise") {
+                macro_rules! exercise {($name:literal,$previous:expr,$values:expr,$setter:expr)=>{
+                    if let Some(previous)=$previous {
+                        let mut checks=Vec::new();
+                        for value in $values {
+                            let result:Result<(),String>=($setter)(value);
+                            checks.push(serde_json::json!({"value":value,"success":result.is_ok(),"error":result.err()}));
+                        }
+                        let restored:Result<(),String>=($setter)(previous);
+                        results.insert(concat!($name,"_changes").into(),serde_json::json!({"checks":checks,"restored":restored.is_ok(),"restore_error":restored.err()}));
+                    }
+                }}
+                exercise!("sleep", before.sleep, [0, 15, 30, 45, 60], |v| hid
+                    .set_sleep(v));
+                if let Some(anc) = before.anc {
+                    exercise!(
+                        "anc",
+                        Some(anc),
+                        [[0, anc[1]], [1, anc[1]], [80, anc[1]]],
+                        |v| hid.set_anc(v)
+                    );
+                }
+                exercise!("wireless", before.wireless, [0, 1], |v| hid.set_wireless(v));
+                exercise!("voice_prompt", before.voice_prompt, [false, true], |v| hid
+                    .set_voice_prompt(v));
+                exercise!("led", before.led, [0, 1, 2], |v| hid.set_led(v));
+                if let (Some(slot), Some(original)) = (slot, before.bands) {
+                    let mut changed = original;
+                    changed[0] = if original[0] < 12 {
+                        original[0] + 1
+                    } else {
+                        original[0] - 1
+                    };
+                    exercise!("speaker_eq", Some(original), [changed], |v| hid
+                        .set_speaker_bands(slot, v));
+                }
+            }
+            let after = hid.features(slot);
+            Ok(
+                serde_json::json!({"before":before,"after":after,"checks":results,"verification":"Reapplied current settings and checked hardware readback","replies":*reports.lock().unwrap()}),
+            )
+        })();
+        match result {
+            Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     if args.iter().any(|a| a == "--verify-mixer") {

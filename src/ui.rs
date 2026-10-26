@@ -39,14 +39,9 @@ const TRAY: u32 = WM_APP + 1;
 const SHOW: u32 = WM_APP + 2;
 const W: i32 = 540;
 const H: i32 = 754;
-// GDI COLORREF stores the palette as 0x00BBGGRR.
-const BG: u32 = 0x231b13; // #131b23
-const PANEL: u32 = 0x30271f; // derived navy
-const WHITE: u32 = 0xf7f1e9; // #e9f1f7
-const MUTED: u32 = 0xc6dfe7; // #e7dfc6
-const CORAL: u32 = 0xa57422; // #2274a5
-const BURGUNDY: u32 = 0xa57422;
-const SURFACE: u32 = 0x616c81; // #816c61
+static PAGE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static DRAFT: Mutex<Option<[i8; 10]>> = Mutex::new(None);
+static FEATURE_FOCUS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 struct Ui {
     tip: HWND,
     icon: HICON,
@@ -96,7 +91,7 @@ unsafe fn round(dc: HDC, r: RECT, c: u32, radius: i32) {
 // Tonal surfaces provide separation without adding visual noise to the card gutters.
 unsafe fn card(dc: HDC, r: RECT, radius: i32) {
     unsafe {
-        round(dc, r, PANEL, radius);
+        round(dc, r, crate::theme::current().panel, radius);
     }
 }
 #[allow(clippy::too_many_arguments)] // Mirrors the native text rectangle and typography arguments.
@@ -158,7 +153,7 @@ unsafe fn percentage(dc: HDC, value: &str, color: u32) {
             .get_or_init(|| Mutex::new((String::new(), 0, Vec::new())))
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if cached.0 != value || cached.1 != color {
+        if cached.0 != format!("{value}:{}", crate::theme::current().panel) || cached.1 != color {
             fill(mem, rect(0, 0, w as i32, h as i32), 0);
             text(mem, 24, 12, 250, 110, value, 0xffffff, 76, 600);
             GdiFlush();
@@ -199,13 +194,13 @@ unsafe fn percentage(dc: HDC, value: &str, color: u32) {
                 for ch in 0..3 {
                     // DIB bytes are BGR; COLORREF is 0x00BBGGRR.
                     let shift = (2 - ch) * 8;
-                    let base = ((PANEL >> shift) & 255) as f32;
+                    let base = ((crate::theme::current().panel >> shift) & 255) as f32;
                     let light = ((color >> shift) & 255) as f32;
                     pixels[i * 4 + ch] = (base + (light - base) * a) as u8;
                 }
                 pixels[i * 4 + 3] = 255;
             }
-            cached.0 = value.to_owned();
+            cached.0 = format!("{value}:{}", crate::theme::current().panel);
             cached.1 = color;
             cached.2 = pixels.to_vec();
         } else {
@@ -230,11 +225,21 @@ fn percent(v: Option<u8>) -> String {
 }
 unsafe fn slider(dc: HDC, y: i32, v: Option<u8>, focus: bool) {
     unsafe {
-        round(dc, rect(48, y, 444, 6), SURFACE, 6);
+        round(dc, rect(48, y, 444, 6), crate::theme::current().surface, 6);
         if let Some(v) = v {
             let x = 48 + 444 * (v.min(100) as i32) / 100;
-            round(dc, rect(48, y, x - 48, 6), CORAL, 6);
-            round(dc, rect(x - 7, y - 4, 14, 14), WHITE, 14);
+            round(
+                dc,
+                rect(48, y, x - 48, 6),
+                crate::theme::current().accent,
+                6,
+            );
+            round(
+                dc,
+                rect(x - 7, y - 4, 14, 14),
+                crate::theme::current().text,
+                14,
+            );
         }
         if focus {
             text(
@@ -244,7 +249,7 @@ unsafe fn slider(dc: HDC, y: i32, v: Option<u8>, focus: bool) {
                 440,
                 17,
                 "Left / Right adjust volume",
-                CORAL,
+                crate::theme::current().accent,
                 11,
                 400,
             );
@@ -261,6 +266,7 @@ unsafe fn paint(
     balance: Option<u8>,
 ) {
     unsafe {
+        crate::theme::set(s.theme);
         fill(
             dc,
             rect(
@@ -269,12 +275,22 @@ unsafe fn paint(
                 if compact { 290 } else { W },
                 if compact { 100 } else { H },
             ),
-            BG,
+            crate::theme::current().bg,
         );
         let effective = s.hardware_mic_muted.unwrap_or(false) || s.audio.microphone_muted;
         if compact {
-            round(dc, rect(1, 1, 288, 98), PANEL, 16);
-            text(dc, 16, 10, 248, 20, "SCYTHE  /  STATUS", CORAL, 11, 600);
+            round(dc, rect(1, 1, 288, 98), crate::theme::current().panel, 16);
+            text(
+                dc,
+                16,
+                10,
+                248,
+                20,
+                "SCYTHE  /  STATUS",
+                crate::theme::current().accent,
+                11,
+                600,
+            );
             text(
                 dc,
                 16,
@@ -299,7 +315,11 @@ unsafe fn paint(
                 } else {
                     "Microphone live"
                 },
-                if effective { CORAL } else { WHITE },
+                if effective {
+                    crate::theme::current().accent
+                } else {
+                    crate::theme::current().text
+                },
                 13,
                 400,
             );
@@ -318,42 +338,124 @@ unsafe fn paint(
                         ""
                     }
                 ),
-                MUTED,
+                crate::theme::current().muted,
                 11,
                 400,
             );
-            text(dc, 16, 79, 258, 16, &s.status, MUTED, 11, 400);
+            text(
+                dc,
+                16,
+                79,
+                258,
+                16,
+                &s.status,
+                crate::theme::current().muted,
+                11,
+                400,
+            );
             return;
         }
         round(
             dc,
             rect(426, 14, 38, 30),
-            if focus == 8 { CORAL } else { SURFACE },
+            if focus == 8 {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().surface
+            },
             10,
         );
         round(
             dc,
             rect(472, 14, 38, 30),
-            if focus == 9 { CORAL } else { SURFACE },
+            if focus == 9 {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().surface
+            },
             10,
         );
-        text(dc, 438, 14, 20, 28, "\u{2212}", WHITE, 18, 600);
-        text(dc, 483, 14, 20, 28, "\u{00d7}", WHITE, 18, 600);
-        text(dc, 30, 17, 360, 22, "SCYTHE", CORAL, 13, 700);
+        text(
+            dc,
+            438,
+            14,
+            20,
+            28,
+            "\u{2212}",
+            crate::theme::current().text,
+            18,
+            600,
+        );
+        text(
+            dc,
+            483,
+            14,
+            20,
+            28,
+            "\u{00d7}",
+            crate::theme::current().text,
+            18,
+            600,
+        );
         text(
             dc,
             30,
-            40,
-            440,
-            23,
-            "Your headset, at a glance.",
-            MUTED,
-            14,
-            400,
+            17,
+            360,
+            22,
+            "SCYTHE",
+            crate::theme::current().accent,
+            13,
+            700,
         );
+        let page = PAGE.load(Ordering::Relaxed);
+        for (i, label) in ["Overview", "Equalizer", "Headset", "Themes"]
+            .iter()
+            .enumerate()
+        {
+            round(
+                dc,
+                rect(30 + i as i32 * 122, 48, 114, 25),
+                if page as usize == i {
+                    crate::theme::current().accent
+                } else {
+                    crate::theme::current().panel
+                },
+                10,
+            );
+            text(
+                dc,
+                39 + i as i32 * 122,
+                49,
+                102,
+                23,
+                label,
+                if page as usize == i {
+                    crate::theme::on_accent()
+                } else {
+                    crate::theme::current().text
+                },
+                12,
+                600,
+            );
+        }
+        if page > 0 {
+            paint_features(dc, s, page);
+            return;
+        }
         card(dc, rect(30, 82, 480, 154), 24);
         percentage(dc, &percent(s.battery), crate::battery::color(s.battery));
-        text(dc, 48, 91, 300, 22, "BATTERY", MUTED, 11, 600);
+        text(
+            dc,
+            48,
+            91,
+            300,
+            22,
+            "BATTERY",
+            crate::theme::current().muted,
+            11,
+            600,
+        );
         text(
             dc,
             320,
@@ -365,7 +467,7 @@ unsafe fn paint(
                 Some(false) => "On battery",
                 None => "Awaiting headset",
             },
-            WHITE,
+            crate::theme::current().text,
             16,
             600,
         );
@@ -379,8 +481,28 @@ unsafe fn paint(
                     "Connect to see battery".into()
                 }
             });
-        text(dc, 320, 160, 165, 22, &remaining, MUTED, 12, 400);
-        text(dc, 48, 208, 248, 22, &s.status, MUTED, 13, 400);
+        text(
+            dc,
+            320,
+            160,
+            165,
+            22,
+            &remaining,
+            crate::theme::current().muted,
+            12,
+            400,
+        );
+        text(
+            dc,
+            48,
+            208,
+            248,
+            22,
+            &s.status,
+            crate::theme::current().muted,
+            13,
+            400,
+        );
         text(
             dc,
             320,
@@ -390,12 +512,22 @@ unsafe fn paint(
             &s.preset
                 .map(|v| format!("Sound preset {v}"))
                 .unwrap_or_else(|| "Sound preset unavailable".into()),
-            MUTED,
+            crate::theme::current().muted,
             12,
             400,
         );
         card(dc, rect(30, 248, 480, 200), 20);
-        text(dc, 48, 256, 250, 26, "Microphone", WHITE, 17, 600);
+        text(
+            dc,
+            48,
+            256,
+            250,
+            26,
+            "Microphone",
+            crate::theme::current().text,
+            17,
+            600,
+        );
         let mic_label = if s.hardware_mic_muted == Some(true) {
             "Muted on headset"
         } else if effective {
@@ -410,14 +542,22 @@ unsafe fn paint(
             270,
             20,
             mic_label,
-            if effective { CORAL } else { MUTED },
+            if effective {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().muted
+            },
             12,
             400,
         );
         round(
             dc,
             rect(363, 283, 129, 28),
-            if focus == 0 { BURGUNDY } else { SURFACE },
+            if focus == 0 {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().surface
+            },
             12,
         );
         text(
@@ -431,7 +571,7 @@ unsafe fn paint(
             } else {
                 "Mute mic"
             },
-            WHITE,
+            crate::theme::current().text,
             13,
             600,
         );
@@ -442,12 +582,22 @@ unsafe fn paint(
             105,
             25,
             &percent(mic.or(s.audio.microphone)),
-            CORAL,
+            crate::theme::current().accent,
             14,
             600,
         );
         slider(dc, 318, mic.or(s.audio.microphone), focus == 1);
-        text(dc, 48, 337, 400, 20, "Mic preset", MUTED, 11, 600);
+        text(
+            dc,
+            48,
+            337,
+            400,
+            20,
+            "Mic preset",
+            crate::theme::current().muted,
+            11,
+            600,
+        );
         for (i, name) in ["Default", "Mic boost", "Broadcast", "Conference"]
             .iter()
             .enumerate()
@@ -456,7 +606,11 @@ unsafe fn paint(
             round(
                 dc,
                 rect(48 + i as i32 * 112, 362, 108, 30),
-                if active { BURGUNDY } else { SURFACE },
+                if active {
+                    crate::theme::current().accent
+                } else {
+                    crate::theme::current().surface
+                },
                 8,
             );
             text(
@@ -466,7 +620,7 @@ unsafe fn paint(
                 96,
                 26,
                 name,
-                WHITE,
+                crate::theme::current().text,
                 12,
                 if active { 600 } else { 400 },
             );
@@ -478,7 +632,7 @@ unsafe fn paint(
             280,
             24,
             "Sidetone · hear your own voice",
-            MUTED,
+            crate::theme::current().muted,
             12,
             400,
         );
@@ -491,7 +645,7 @@ unsafe fn paint(
             &s.sidetone
                 .map(|v| format!("{v} / 15"))
                 .unwrap_or_else(|| "— / 15".into()),
-            CORAL,
+            crate::theme::current().accent,
             12,
             600,
         );
@@ -502,13 +656,43 @@ unsafe fn paint(
             false,
         );
         if focus == 4 {
-            text(dc, 350, 337, 142, 20, "← / → select", CORAL, 11, 400);
+            text(
+                dc,
+                350,
+                337,
+                142,
+                20,
+                "← / → select",
+                crate::theme::current().accent,
+                11,
+                400,
+            );
         }
         if focus == 5 {
-            text(dc, 340, 399, 70, 24, "← / →", CORAL, 11, 400);
+            text(
+                dc,
+                340,
+                399,
+                70,
+                24,
+                "← / →",
+                crate::theme::current().accent,
+                11,
+                400,
+            );
         }
         card(dc, rect(30, 460, 480, 74), 20);
-        text(dc, 48, 466, 250, 27, "Game volume", WHITE, 17, 600);
+        text(
+            dc,
+            48,
+            466,
+            250,
+            27,
+            "Game volume",
+            crate::theme::current().text,
+            17,
+            600,
+        );
         value(
             dc,
             387,
@@ -524,19 +708,33 @@ unsafe fn paint(
                     ""
                 }
             ),
-            CORAL,
+            crate::theme::current().accent,
             14,
             600,
         );
         slider(dc, 508, game.or(s.audio.speaker), focus == 2);
         card(dc, rect(30, 546, 480, 116), 20);
-        text(dc, 48, 554, 290, 26, "Game / Chat balance", WHITE, 17, 600);
+        text(
+            dc,
+            48,
+            554,
+            290,
+            26,
+            "Game / Chat balance",
+            crate::theme::current().text,
+            17,
+            600,
+        );
         let balance = balance.or(s.game_chat_balance).map(|v| v.min(20));
         let available = balance.is_some();
         round(
             dc,
             rect(410, 556, 82, 28),
-            if focus == 7 { BURGUNDY } else { SURFACE },
+            if focus == 7 {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().surface
+            },
             10,
         );
         text(
@@ -546,7 +744,11 @@ unsafe fn paint(
             62,
             26,
             "Center",
-            if available { WHITE } else { MUTED },
+            if available {
+                crate::theme::current().text
+            } else {
+                crate::theme::current().muted
+            },
             12,
             600,
         );
@@ -556,7 +758,17 @@ unsafe fn paint(
                 (format!("Game {game}%"), format!("Chat {chat}%"))
             })
             .unwrap_or_else(|| ("Game --".into(), "Chat --".into()));
-        text(dc, 48, 588, 155, 22, &game_label, CORAL, 13, 600);
+        text(
+            dc,
+            48,
+            588,
+            155,
+            22,
+            &game_label,
+            crate::theme::current().accent,
+            13,
+            600,
+        );
         text(
             dc,
             219,
@@ -570,22 +782,42 @@ unsafe fn paint(
             } else {
                 "Unavailable"
             },
-            MUTED,
+            crate::theme::current().muted,
             11,
             400,
         );
-        value(dc, 395, 588, 97, 22, &chat_label, CORAL, 13, 600);
-        round(dc, rect(48, 623, 444, 6), SURFACE, 6);
-        fill(dc, rect(269, 618, 2, 16), MUTED);
+        value(
+            dc,
+            395,
+            588,
+            97,
+            22,
+            &chat_label,
+            crate::theme::current().accent,
+            13,
+            600,
+        );
+        round(
+            dc,
+            rect(48, 623, 444, 6),
+            crate::theme::current().surface,
+            6,
+        );
+        fill(dc, rect(269, 618, 2, 16), crate::theme::current().muted);
         if let Some(v) = balance {
             let x = 48 + 444 * v as i32 / 20;
             round(
                 dc,
                 rect(x.min(270), 623, (x - 270).abs().max(2), 6),
-                CORAL,
+                crate::theme::current().accent,
                 6,
             );
-            round(dc, rect(x - 7, 619, 14, 14), WHITE, 14);
+            round(
+                dc,
+                rect(x - 7, 619, 14, 14),
+                crate::theme::current().text,
+                14,
+            );
         }
         text(
             dc,
@@ -598,7 +830,11 @@ unsafe fn paint(
             } else {
                 "Route game audio to Game; voice apps to Chat."
             },
-            if focus == 6 { CORAL } else { MUTED },
+            if focus == 6 {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().muted
+            },
             11,
             400,
         );
@@ -610,7 +846,7 @@ unsafe fn paint(
             315,
             25,
             "Headset mute notifications",
-            WHITE,
+            crate::theme::current().text,
             14,
             600,
         );
@@ -621,7 +857,7 @@ unsafe fn paint(
             318,
             19,
             "Get an alert when you mute on the headset.",
-            MUTED,
+            crate::theme::current().muted,
             11,
             400,
         );
@@ -629,20 +865,30 @@ unsafe fn paint(
             dc,
             rect(432, 688, 58, 27),
             if s.notifications_enabled {
-                CORAL
+                crate::theme::current().accent
             } else {
-                SURFACE
+                crate::theme::current().surface
             },
             27,
         );
         round(
             dc,
             rect(if s.notifications_enabled { 464 } else { 436 }, 692, 19, 19),
-            BG,
+            crate::theme::current().bg,
             19,
         );
         if focus == 3 {
-            text(dc, 398, 689, 30, 23, "›", CORAL, 18, 600);
+            text(
+                dc,
+                398,
+                689,
+                30,
+                23,
+                "›",
+                crate::theme::current().accent,
+                18,
+                600,
+            );
         }
         let footer = s.last_error.clone().unwrap_or_else(|| {
             s.battery_age_seconds
@@ -656,12 +902,467 @@ unsafe fn paint(
             480,
             25,
             &footer,
-            if s.last_error.is_some() { CORAL } else { MUTED },
+            if s.last_error.is_some() {
+                crate::theme::current().accent
+            } else {
+                crate::theme::current().muted
+            },
             11,
             400,
         );
     }
 }
+enum FeatureCommand {
+    Hardware(Action),
+    Preset(usize),
+    Adjust(usize, i8),
+    Apply,
+    Revert,
+}
+struct FeatureButton {
+    r: RECT,
+    label: String,
+    command: FeatureCommand,
+    enabled: bool,
+    selected: bool,
+}
+fn feature_buttons(s: &State, page: u8) -> Vec<FeatureButton> {
+    let mut out = Vec::new();
+    let mut add = |x, y, w, label: String, command, enabled, selected| {
+        out.push(FeatureButton {
+            r: rect(x, y, w, 30),
+            label,
+            command,
+            enabled,
+            selected,
+        })
+    };
+    match page {
+        1 => {
+            for (i, (name, _)) in crate::features::PRESETS.iter().enumerate() {
+                add(
+                    48 + i as i32 * 112,
+                    150,
+                    104,
+                    (*name).into(),
+                    FeatureCommand::Preset(i),
+                    s.features.bands.is_some(),
+                    DRAFT.lock().unwrap().or(s.features.bands)
+                        == Some(crate::features::PRESETS[i].1),
+                );
+            }
+            for i in 0..10 {
+                add(
+                    358,
+                    218 + i as i32 * 35,
+                    40,
+                    "-".into(),
+                    FeatureCommand::Adjust(i, -1),
+                    s.features.bands.is_some(),
+                    false,
+                );
+                add(
+                    444,
+                    218 + i as i32 * 35,
+                    40,
+                    "+".into(),
+                    FeatureCommand::Adjust(i, 1),
+                    s.features.bands.is_some(),
+                    false,
+                );
+            }
+            add(
+                48,
+                624,
+                210,
+                "Revert edits".into(),
+                FeatureCommand::Revert,
+                s.features.bands.is_some(),
+                false,
+            );
+            add(
+                274,
+                624,
+                210,
+                "Apply to current slot".into(),
+                FeatureCommand::Apply,
+                s.features.bands.is_some(),
+                true,
+            );
+        }
+        2 => {
+            for (i, value) in [0, 15, 30, 45, 60].iter().enumerate() {
+                add(
+                    48 + i as i32 * 89,
+                    145,
+                    81,
+                    if *value == 0 {
+                        "Never".into()
+                    } else {
+                        format!("{value} min")
+                    },
+                    FeatureCommand::Hardware(Action::SetSleep(*value)),
+                    s.features.sleep.is_some(),
+                    s.features.sleep == Some(*value),
+                );
+            }
+            for (i, (name, value)) in [("Off", 0), ("ANC", 1), ("Ambient", 80)].iter().enumerate() {
+                add(
+                    48 + i as i32 * 150,
+                    247,
+                    145,
+                    (*name).into(),
+                    FeatureCommand::Hardware(Action::SetAnc([
+                        *value,
+                        s.features.anc.map(|v| v[1]).unwrap_or(1),
+                    ])),
+                    s.features.anc.is_some(),
+                    s.features.anc.is_some_and(|v| v[0] == *value),
+                );
+            }
+            for (i, (name, value)) in [("Range", 0), ("Low latency", 1)].iter().enumerate() {
+                add(
+                    48 + i as i32 * 225,
+                    349,
+                    215,
+                    (*name).into(),
+                    FeatureCommand::Hardware(Action::SetWireless(*value)),
+                    s.features.wireless.is_some(),
+                    s.features.wireless == Some(*value),
+                );
+            }
+            for (i, value) in [false, true].iter().enumerate() {
+                add(
+                    48 + i as i32 * 225,
+                    451,
+                    215,
+                    if *value { "Enabled" } else { "Disabled" }.into(),
+                    FeatureCommand::Hardware(Action::SetVoicePrompt(*value)),
+                    s.features.voice_prompt.is_some(),
+                    s.features.voice_prompt == Some(*value),
+                );
+            }
+            for (i, name) in ["Connection", "Battery level", "Low battery"]
+                .iter()
+                .enumerate()
+            {
+                add(
+                    48 + i as i32 * 150,
+                    553,
+                    145,
+                    (*name).into(),
+                    FeatureCommand::Hardware(Action::SetLed(i as u8)),
+                    s.features.led.is_some(),
+                    s.features.led == Some(i as u8),
+                );
+            }
+        }
+        3 => {
+            for (i, name) in crate::theme::NAMES.iter().enumerate() {
+                add(
+                    340,
+                    128 + i as i32 * 126,
+                    144,
+                    if s.theme as usize == i {
+                        "Selected".into()
+                    } else {
+                        format!("Use {name}")
+                    },
+                    FeatureCommand::Hardware(Action::SetTheme(i as u8)),
+                    true,
+                    s.theme as usize == i,
+                );
+            }
+        }
+        _ => {}
+    }
+    out
+}
+fn edit_eq_at(index: usize, x: i32) {
+    let s = state();
+    let mut draft = DRAFT.lock().unwrap();
+    if let Some(mut bands) = draft.or(s.features.bands) {
+        bands[index] = (((x - 128).clamp(0, 200) * 24 + 100) / 200 - 12) as i8;
+        *draft = Some(bands);
+    }
+}
+fn activate_feature(command: FeatureCommand) {
+    let s = state();
+    match command {
+        FeatureCommand::Hardware(action) => send(action),
+        FeatureCommand::Preset(index) => {
+            *DRAFT.lock().unwrap() = Some(crate::features::PRESETS[index].1)
+        }
+        FeatureCommand::Adjust(index, delta) => {
+            let mut draft = DRAFT.lock().unwrap();
+            if let Some(mut bands) = draft.or(s.features.bands) {
+                bands[index] = (bands[index] + delta).clamp(-12, 12);
+                *draft = Some(bands);
+            }
+        }
+        FeatureCommand::Apply => {
+            if let Some(bands) = *DRAFT.lock().unwrap() {
+                send(Action::SetSpeakerBands(bands));
+            }
+        }
+        FeatureCommand::Revert => *DRAFT.lock().unwrap() = None,
+    }
+}
+unsafe fn paint_features(dc: HDC, s: &State, page: u8) {
+    unsafe {
+        let p = crate::theme::current();
+        match page {
+            1 => {
+                card(dc, rect(30, 90, 480, 610), 20);
+                text(dc, 48, 103, 440, 28, "Speaker equalizer", p.text, 21, 600);
+                text(
+                    dc,
+                    48,
+                    132,
+                    440,
+                    18,
+                    "Scythe presets / 10 bands / -12 to +12 dB",
+                    p.muted,
+                    12,
+                    400,
+                );
+                text(
+                    dc,
+                    48,
+                    188,
+                    440,
+                    22,
+                    "FREQUENCY                        GAIN",
+                    p.muted,
+                    11,
+                    600,
+                );
+                let bands = DRAFT.lock().unwrap().or(s.features.bands);
+                for (i, name) in crate::features::FREQUENCIES.iter().enumerate() {
+                    let y = 218 + i as i32 * 35;
+                    text(
+                        dc,
+                        48,
+                        y + 4,
+                        80,
+                        24,
+                        &format!("{name} Hz"),
+                        p.text,
+                        14,
+                        400,
+                    );
+                    let db = bands.map(|v| v[i]);
+                    round(dc, rect(128, y + 13, 200, 5), p.surface, 4);
+                    if let Some(v) = db {
+                        round(
+                            dc,
+                            rect(128 + (v as i32 + 12) * 200 / 24 - 4, y + 8, 10, 15),
+                            p.accent,
+                            8,
+                        );
+                    }
+                    text(
+                        dc,
+                        403,
+                        y + 3,
+                        38,
+                        25,
+                        &db.map(|v| format!("{v:+}")).unwrap_or("--".into()),
+                        p.text,
+                        14,
+                        600,
+                    );
+                }
+                text(
+                    dc,
+                    48,
+                    578,
+                    440,
+                    21,
+                    &s.preset
+                        .map(|v| format!("Editing headset slot {v}; other slots are preserved."))
+                        .unwrap_or("Connect the headset to read its current slot.".into()),
+                    p.muted,
+                    12,
+                    400,
+                );
+                text(
+                    dc,
+                    48,
+                    661,
+                    440,
+                    24,
+                    "Presets stage edits. Apply writes the displayed bands.",
+                    p.muted,
+                    12,
+                    400,
+                );
+            }
+            2 => {
+                for (y, title, detail) in [
+                    (
+                        90,
+                        "Auto sleep",
+                        "Power off after silence; Never disables the timer.",
+                    ),
+                    (
+                        192,
+                        "Noise cancellation",
+                        "Switch modes while preserving the current ANC strength.",
+                    ),
+                    (
+                        294,
+                        "Wireless mode",
+                        "Choose maximum range or lower wireless latency.",
+                    ),
+                    (
+                        396,
+                        "Mute voice prompt",
+                        "Spoken headset microphone mute / unmute feedback.",
+                    ),
+                    (
+                        498,
+                        "Dongle LED",
+                        "Choose what the dongle indicator reports.",
+                    ),
+                ] {
+                    card(dc, rect(30, y, 480, 92), 18);
+                    text(dc, 48, y + 9, 440, 25, title, p.text, 17, 600);
+                    text(dc, 48, y + 34, 440, 19, detail, p.muted, 12, 400);
+                }
+                card(dc, rect(30, 604, 480, 96), 18);
+                text(
+                    dc,
+                    48,
+                    615,
+                    440,
+                    24,
+                    "Microphone enhancements",
+                    p.text,
+                    17,
+                    600,
+                );
+                text(
+                    dc,
+                    48,
+                    644,
+                    440,
+                    20,
+                    "Normalization, clarity, and noise reduction are unavailable.",
+                    p.muted,
+                    12,
+                    400,
+                );
+                text(
+                    dc,
+                    48,
+                    666,
+                    440,
+                    20,
+                    "An independent microphone processing backend is required.",
+                    p.muted,
+                    12,
+                    400,
+                );
+            }
+            3 => {
+                for (i, name) in crate::theme::NAMES.iter().enumerate() {
+                    let y = 90 + i as i32 * 126;
+                    card(dc, rect(30, y, 480, 112), 18);
+                    text(dc, 48, y + 12, 280, 28, name, p.text, 20, 600);
+                    for (j, color) in crate::theme::SWATCHES[i].iter().enumerate() {
+                        round(
+                            dc,
+                            rect(48 + j as i32 * 52, y + 52, 42, 34),
+                            crate::theme::swatch(*color),
+                            10,
+                        );
+                    }
+                }
+                text(
+                    dc,
+                    48,
+                    615,
+                    440,
+                    24,
+                    "Themes apply to the dashboard and tray preview.",
+                    p.muted,
+                    13,
+                    400,
+                );
+                text(
+                    dc,
+                    48,
+                    643,
+                    440,
+                    24,
+                    "Battery glow keeps its green / yellow / red thresholds.",
+                    p.muted,
+                    12,
+                    400,
+                );
+            }
+            _ => {}
+        }
+        for (index, button) in feature_buttons(s, page).iter().enumerate() {
+            let focused = FEATURE_FOCUS.load(Ordering::Relaxed) == index;
+            if focused && button.enabled {
+                round(
+                    dc,
+                    rect(
+                        button.r.left - 2,
+                        button.r.top - 2,
+                        button.r.right - button.r.left + 4,
+                        34,
+                    ),
+                    p.text,
+                    11,
+                );
+            }
+            round(
+                dc,
+                button.r,
+                if button.selected { p.accent } else { p.bg },
+                9,
+            );
+            text(
+                dc,
+                button.r.left + 8,
+                button.r.top + 4,
+                button.r.right - button.r.left - 12,
+                24,
+                &button.label,
+                if !button.enabled {
+                    p.surface
+                } else if button.selected {
+                    crate::theme::on_accent()
+                } else {
+                    p.text
+                },
+                12,
+                600,
+            );
+        }
+        text(
+            dc,
+            30,
+            712,
+            480,
+            21,
+            s.last_error
+                .as_deref()
+                .unwrap_or("F1-F4: pages   /   Tab: next control   /   Enter: select"),
+            if s.last_error.is_some() {
+                p.accent
+            } else {
+                p.muted
+            },
+            11,
+            400,
+        );
+    }
+}
+
 unsafe fn notify(hwnd: HWND, action: u32, balloon: bool) {
     unsafe {
         let mut n: NOTIFYICONDATAW = zeroed();
@@ -891,7 +1592,7 @@ unsafe extern "system" fn window(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> 
                 let y = p.y * H / r.bottom.max(1);
                 let button =
                     (14..44).contains(&y) && ((426..464).contains(&x) || (472..510).contains(&x));
-                if (0..70).contains(&y) && !button {
+                if (0..44).contains(&y) && !button {
                     HTCAPTION as isize
                 } else {
                     HTCLIENT as isize
@@ -900,6 +1601,43 @@ unsafe extern "system" fn window(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> 
             WM_LBUTTONDOWN => {
                 let (x, y) = point(hwnd, l);
                 let s = state();
+                if (48..73).contains(&y) && (30..510).contains(&x) {
+                    PAGE.store(((x - 30) / 122).min(3) as u8, Ordering::Relaxed);
+                    FEATURE_FOCUS.store(0, Ordering::Relaxed);
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
+                if PAGE.load(Ordering::Relaxed) == 1
+                    && (128..=328).contains(&x)
+                    && (218..568).contains(&y)
+                    && (y - 218) % 35 < 30
+                    && s.features.bands.is_some()
+                {
+                    let index = ((y - 218) / 35) as usize;
+                    ui(hwnd).drag = 100 + index as i32;
+                    SetCapture(hwnd);
+                    edit_eq_at(index, x);
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
+                if PAGE.load(Ordering::Relaxed) > 0 && y >= 82 {
+                    let buttons = feature_buttons(&s, PAGE.load(Ordering::Relaxed));
+                    for (index, button) in buttons.into_iter().enumerate() {
+                        if x >= button.r.left
+                            && x < button.r.right
+                            && y >= button.r.top
+                            && y < button.r.bottom
+                        {
+                            FEATURE_FOCUS.store(index, Ordering::Relaxed);
+                            if button.enabled {
+                                activate_feature(button.command);
+                            }
+                            break;
+                        }
+                    }
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
                 if (14..44).contains(&y) && ((426..464).contains(&x) || (472..510).contains(&x)) {
                     ui(hwnd).focus = if x < 464 { 8 } else { 9 };
                     ShowWindow(hwnd, SW_HIDE);
@@ -952,7 +1690,10 @@ unsafe extern "system" fn window(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> 
                 0
             }
             WM_MOUSEMOVE => {
-                if ui(hwnd).drag > 0 {
+                if ui(hwnd).drag >= 100 {
+                    edit_eq_at((ui(hwnd).drag - 100) as usize, point(hwnd, l).0);
+                    InvalidateRect(hwnd, null(), 0);
+                } else if ui(hwnd).drag > 0 {
                     volume(hwnd, point(hwnd, l).0);
                 }
                 0
@@ -969,6 +1710,31 @@ unsafe extern "system" fn window(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> 
             }
             WM_KEYDOWN => {
                 let s = state();
+                if (0x70..=0x73).contains(&w) {
+                    PAGE.store((w - 0x70) as u8, Ordering::Relaxed);
+                    FEATURE_FOCUS.store(0, Ordering::Relaxed);
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
+                if PAGE.load(Ordering::Relaxed) > 0 && w != 0x1b {
+                    let buttons = feature_buttons(&s, PAGE.load(Ordering::Relaxed));
+                    let index = FEATURE_FOCUS
+                        .load(Ordering::Relaxed)
+                        .min(buttons.len().saturating_sub(1));
+                    if !buttons.is_empty() {
+                        if w == 9 {
+                            FEATURE_FOCUS.store((index + 1) % buttons.len(), Ordering::Relaxed);
+                        }
+                        if w == 0x20 || w == 0x0d {
+                            let button = buttons.into_iter().nth(index).unwrap();
+                            if button.enabled {
+                                activate_feature(button.command);
+                            }
+                        }
+                    }
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
                 match w {
                     0x1b => {
                         ShowWindow(hwnd, SW_HIDE);
@@ -1152,7 +1918,7 @@ unsafe fn make_icon() -> HICON {
         let bm = CreateCompatibleBitmap(dc, 64, 64);
         let old = SelectObject(mem, bm);
         let target = crate::render::target(mem, 64, 64, 32, 32);
-        fill(mem, rect(0, 0, 32, 32), BG);
+        fill(mem, rect(0, 0, 32, 32), crate::theme::current().bg);
         // A broad curved blade and diagonal handle stay legible at tray size.
         let blade = [
             POINT { x: 4, y: 12 },
@@ -1164,14 +1930,14 @@ unsafe fn make_icon() -> HICON {
             POINT { x: 15, y: 9 },
             POINT { x: 8, y: 12 },
         ];
-        crate::render::polygon(mem, &blade, CORAL);
+        crate::render::polygon(mem, &blade, crate::theme::current().accent);
         let handle = [
             POINT { x: 21, y: 9 },
             POINT { x: 24, y: 11 },
             POINT { x: 11, y: 30 },
             POINT { x: 8, y: 28 },
         ];
-        crate::render::polygon(mem, &handle, WHITE);
+        crate::render::polygon(mem, &handle, crate::theme::current().text);
         drop(target);
         SelectObject(mem, old);
         DeleteDC(mem);
@@ -1230,6 +1996,17 @@ unsafe fn render(path: &std::path::Path, compact: bool, scale: i32) -> std::io::
     }
 }
 pub fn run(state: Arc<Mutex<State>>, refresh: Arc<AtomicBool>, commands: Sender<Action>) {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(index) = args.iter().position(|a| a == "--page")
+        && let Some(page) = args.get(index + 1).and_then(|v| v.parse::<u8>().ok())
+    {
+        PAGE.store(page.min(3), Ordering::Relaxed);
+    }
+    if let Some(index) = args.iter().position(|a| a == "--theme")
+        && let Some(theme) = args.get(index + 1).and_then(|v| v.parse::<u8>().ok())
+    {
+        state.lock().unwrap().theme = theme.min(3);
+    }
     STATE.set(state).ok();
     REFRESH.set(refresh).ok();
     COMMANDS.set(commands).ok();

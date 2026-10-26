@@ -4,6 +4,8 @@ use std::path::PathBuf;
 #[derive(Default, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
+    pub theme: u8,
+    #[serde(default)]
     pub mic_notifications: bool,
 }
 fn path() -> PathBuf {
@@ -41,4 +43,20 @@ pub fn save(value: &Settings) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     std::fs::rename(temp, p).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn older_preferences_keep_notifications_when_theme_is_added() {
+        let mut settings: Settings = serde_json::from_str(r#"{"mic_notifications":true}"#).unwrap();
+        assert!(settings.mic_notifications);
+        assert_eq!(settings.theme, 0);
+        settings.theme = 3;
+        let saved = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&saved).unwrap();
+        assert!(restored.mic_notifications);
+        assert_eq!(restored.theme, 3);
+    }
 }

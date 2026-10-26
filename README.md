@@ -25,7 +25,7 @@ These are observations, not a controlled benchmark or a guarantee. Memory was sa
 
 ## Current support
 
-**Version 0.5.0 | Windows x64 | BlackShark V3 Pro**
+**Version 0.6.0 | Windows x64 | BlackShark V3 Pro**
 
 The BlackShark V3 Pro connected through its USB wireless dongle is the verified configuration. Other headset models, Bluetooth control, and analog connections are not supported. Hardware features may depend on firmware.
 
@@ -41,8 +41,14 @@ The BlackShark V3 Pro connected through its USB wireless dongle is the verified 
 | Headset mute notifications | Optional Windows alert |
 | Microphone EQ | Default, Mic boost, Broadcast, Conference |
 | Sidetone | 0-15 |
-| Speaker EQ | Current firmware slot displayed; editing not implemented |
-| THX, mic enhancements, ANC, sleep timer, firmware updates | Not implemented |
+| Speaker EQ | Flat, Focus, Warm, Cinema presets and 10 custom bands (-12 to +12 dB) |
+| Auto sleep | Never, 15, 30, 45, or 60 minutes |
+| Noise cancellation | Off, ANC, Ambient; preserves current strength |
+| Wireless mode | Range or low latency, with HID reconnect handling |
+| Mute voice prompt | Enable/disable spoken microphone mute feedback |
+| Dongle LED | Connection, battery level, or low-battery warning |
+| Themes | Deepwater, Meadow, Ember, Rosewater |
+| THX, microphone enhancements, firmware updates | Not implemented |
 | Other headset models | Not yet supported |
 
 ## Using Scythe
@@ -62,6 +68,31 @@ Software microphone mute and physical headset mute are separate. Release a physi
 Battery glow is green at 60-100%, yellow at 20-59%, and red at 0-19%. Unknown readings stay neutral. Runtime estimation requires at least 20 minutes and a drop of 3 percentage points. Charging, a percentage increase, missing data, or exit resets learning. Estimates are approximate; no battery history is saved.
 
 The dashboard uses privately embedded Clear Sans, antialiased native drawing, and a blue/navy/cream palette. Fonts are not installed globally.
+
+## Equalizer and headset settings
+
+Use the **Equalizer** page to stage a Scythe preset or adjust individual bands. **Apply to current slot** writes those bands to the current headset slot. Other slots and their metadata are preserved. **Revert edits** discards staged changes and displays the latest device readback. These presets are Scythe curves, not Synapse cloud profiles. Applying a curve replaces the current slot's bands; note existing values if you want to restore them later.
+
+The **Headset** page contains the sleep timer, ANC/Ambient modes, wireless mode, microphone mute voice prompt, and dongle LED mode. Buttons remain disabled when a setting cannot be read. Changes require device acknowledgement and readback. Wireless mode changes can reconnect the control interface; Scythe reopens it automatically.
+
+Microphone normalization, vocal clarity, and noise reduction are unavailable. They require an independent audio-processing backend; this version does not load THX/vendor libraries or create a processed virtual microphone.
+
+![Speaker equalizer](docs/images/equalizer.png)
+
+![Headset controls](docs/images/headset.png)
+
+## Themes
+
+Choose a theme on the **Themes** page. The choice is saved locally and applies to the dashboard and compact preview. Battery status retains its green/yellow/red colors.
+
+| Theme | Palette |
+| --- | --- |
+| Deepwater | `2274a5` `e7dfc6` `e9f1f7` `131b23` `816c61` |
+| Meadow | `faffd8` `ecffb0` `9aa899` `54577c` `4a7b9d` |
+| Ember | `0a0903` `ff0000` `ff8200` `ffc100` `ffeaae` |
+| Rosewater | `880d1e` `dd2d4a` `f26a8d` `f49cbb` `cbeef3` |
+
+Use F1-F4 to switch pages. Tab cycles controls; Enter or Space selects the focused control. On Overview, the existing arrow-key volume and balance adjustments remain available.
 
 ## Build
 
@@ -90,7 +121,7 @@ cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 ```
 
-Twelve tests cover report checksums and framing, invalid packets, physical mute notifications, notification transitions, mixer endpoints, battery colors, discharge estimates, private font loading, and antialiased edges at 1x and 2x. Protocol fixtures contain packet bytes and direction labels rather than full session logs. Unit tests do not establish compatibility with untested hardware.
+Fifteen tests cover settings compatibility, feature reply decoding, sign-magnitude EQ encoding, report checksums and framing, invalid packets, physical mute notifications, notification transitions, mixer endpoints, battery colors, discharge estimates, private font loading, and antialiased edges at 1x and 2x. Protocol fixtures contain packet bytes and direction labels rather than full session logs. Unit tests do not establish compatibility with untested hardware.
 
 | Module | Purpose |
 | --- | --- |
@@ -117,7 +148,9 @@ Twelve tests cover report checksums and framing, invalid packets, physical mute 
 
 `--probe` enumerates HID descriptors and may include local device identifiers. `--snapshot` reads current state. Render modes export the native painter to a bitmap. `--window-info` inspects an existing Scythe window; `--show` opens the dashboard on launch.
 
-`--verify-mic` and `--verify-mixer` **write current settings back to the device** and check readback. These developer diagnostics are for supported hardware, not discovery on unknown models.
+`--verify-mic`, `--verify-mixer`, and `--verify-features` **write current settings back to the device** and check readback. These developer diagnostics are for supported hardware, not discovery on unknown models. Adding `--exercise` to `--verify-features` temporarily changes supported settings and restores them; it is an explicit hardware test. `--page 0..3` and `--theme 0..3` select a page/theme for offline renders.
+
+Hardware readback verified all exposed sleep intervals, ANC/Off/Ambient, both wireless modes, both mute voice prompt states, all three LED modes, and an EQ band change followed by restoration. A working EQ update requires a start/write/stop transaction. All original settings were restored after that validation. Elapsed sleep behavior, subjective sound quality, and firmware persistence across power cycles still need user testing.
 
 ## More headset models
 
