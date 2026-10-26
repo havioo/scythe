@@ -23,7 +23,7 @@ The BlackShark V3 Pro connected through its USB wireless dongle is the verified 
 | Physical headset mute detection | Supported |
 | Headset mute notifications | Optional Windows alert |
 | Microphone EQ | Default, Mic boost, Broadcast, Conference |
-| Sidetone | 0?15 |
+| Sidetone | 0-15 |
 | Speaker EQ | Current firmware slot displayed; editing not implemented |
 | THX, mic enhancements, ANC, sleep timer, firmware updates | Not implemented |
 | Other headset models | Not yet supported |
